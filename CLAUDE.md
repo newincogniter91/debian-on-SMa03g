@@ -66,8 +66,9 @@ selectable with the `tag` input). Workflows read inputs with `gh release downloa
 - **AVB.** The bootloader is unlocked but `vbmeta` still matters: a wrong boot/vbmeta pair makes Android's first-stage
   init die (`avb_slot_verify failed`) and the phone bootloops. The recovery artifact ships the *stock* `vbmeta`; the
   boot artifact deliberately ships only `boot.img`.
-- **Odin tars** are plain `ustar` (no `.md5`), AP slot only. **Odin cannot write the big sparse `userdata.img` on this
-  device** (`Complete(Write) operation failed`), so userdata goes through `a03d`.
+- **Odin tars** are plain `ustar` (no `.md5`), AP slot only, and all three artifacts are flashed that way, userdata
+  included. If Odin ever fails on the big sparse `userdata.img` (`Complete(Write) operation failed`, seen on one unit),
+  `a03d` on port 1234 is the documented fallback.
 - **ext4 features.** The 4.14 kernel does not know newer mke2fs defaults; `build-userdata.sh` uses an explicit
   `mke2fs.conf`. Keep it.
 - **configfs gotcha.** `[ -s "$G/UDC" ]` is always true on configfs, which silently prevented the USB gadget from

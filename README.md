@@ -29,7 +29,7 @@ Everything is built from scratch by the GitHub Actions workflows in this repo (n
 | File | What it is | How it is installed |
 |---|---|---|
 | `AP_REC_KSTOCK_VBSTOCK_A03G.tar` | **Rescue recovery.** Samsung's stock recovery kernel + our rescue ramdisk + the stock `vbmeta`. It brings up a USB network (phone `192.168.7.2`), a root shell on TCP **2323** and an image flasher on TCP **1234**. | Odin, AP slot |
-| `USERDATA_MIN_A03G.tar` | **The Debian root filesystem** (`userdata.img`, sparse ext4): systemd, openssh-server, `root` / password `1234`, USB network `192.168.7.2/24`. Nothing else: no extra users, no apps. It grows to fill the whole partition on first boot. | **Rescue flasher** (not Odin, see [problems](#odin-fails-on-userdataimg)) |
+| `USERDATA_MIN_A03G.tar` | **The Debian root filesystem** (`userdata.img`, sparse ext4): systemd, openssh-server, `root` / password `1234`, USB network `192.168.7.2/24`. Nothing else: no extra users, no apps. It grows to fill the whole partition on first boot. | Odin, AP slot (rescue flasher as a fallback, see [problems](#odin-fails-on-userdataimg)) |
 | `AP_BOOT_WDT_A03G.tar` | **`boot.img`**: Linux 4.14.199 built from Samsung's open source release with the options Debian/systemd needs and the PMIC watchdog disabled, plus an initramfs that mounts Debian from `userdata` (and drops to the rescue shell if that fails). | Odin, AP slot |
 | `a03-wifi.tar.gz` | *Optional.* Unisoc Wi-Fi driver package (stock modules, WCN files, firmware, `install.sh`) to extract on the running Debian. | `scp` + `./install.sh` |
 | `Image`, `kernel.config`, `Module.symvers`, `modules.tar.gz`, `crc-report.txt` | Kernel build outputs (the modules and CRC report are needed by the Wi-Fi package). | - |
@@ -52,26 +52,24 @@ In Odin load each `.tar` in the **AP** slot only, leave the other slots empty an
 
 ### 1. Rescue recovery: `AP_REC_KSTOCK_VBSTOCK_A03G.tar`
 
-1. Flash it with Odin (AP slot) and wait for `PASS`.
-2. Reboot into recovery: phone off, USB cable connected, hold **Volume Up + Power**.
-3. A new **RNDIS network adapter** appears on the PC. Give it a static IPv4 address, no gateway:
-   `192.168.7.1`, mask `255.255.255.0`.
-4. Check: `ping 192.168.7.2`. Shell: `ncat 192.168.7.2 2323`.
+Flash it with Odin (AP slot), wait for `PASS`, reboot the phone.
+
+*Optional, whenever you need a shell on the phone without Debian:* reboot into recovery (phone off, USB cable
+connected, hold **Volume Up + Power**). A new **RNDIS network adapter** appears on the PC; give it a static IPv4
+address, no gateway: `192.168.7.1`, mask `255.255.255.0`. Then `ping 192.168.7.2` and `ncat 192.168.7.2 2323` for the
+root shell.
 
 ### 2. Debian root filesystem: `USERDATA_MIN_A03G.tar`
 
-From a Windows `cmd.exe` in the folder holding the file:
+Back to download mode, flash it with Odin in the **AP** slot like the others and reboot the phone. It is a big
+sparse image, so Odin takes a while to write it.
 
-```
-ncat 192.168.7.2 1234 < USERDATA_MIN_A03G.tar
-```
-
-The flasher prints each partition it writes and ends with `DONE: ... no errors`. Then, in the rescue shell
-(`ncat 192.168.7.2 2323`), run `reboot -f`.
-
-*Alternative for big files:* in the shell run `xfer-start`, the PC sees a 4 GiB USB disk called `A03XFER`; copy the
-`.tar` onto it, eject it, then run `xfer-flash` in the shell. (This scribbles over a 4 GiB area near the end of the
-`userdata` partition; the filesystem grows over it on first boot.)
+*Fallback if Odin fails on it* (see [problems](#odin-fails-on-userdataimg)): boot the rescue recovery from step 1 and,
+from a Windows `cmd.exe` in the folder holding the file, run `ncat 192.168.7.2 1234 < USERDATA_MIN_A03G.tar`. The
+flasher ends with `DONE: ... no errors`; then run `reboot -f` in the shell (`ncat 192.168.7.2 2323`). For very big
+files you can also run `xfer-start` in the shell, copy the `.tar` onto the 4 GiB `A03XFER` USB disk that appears on
+the PC, eject it and run `xfer-flash` (this scribbles over a 4 GiB area near the end of `userdata`; the filesystem
+grows over it on first boot).
 
 ### 3. Boot image: `AP_BOOT_WDT_A03G.tar`
 
@@ -150,9 +148,9 @@ sync; umount /newroot; echo done
 
 ### Odin fails on userdata.img
 
-On our unit Odin stopped with `Complete(Write) operation failed` while writing the sparse `userdata.img`. That is why
-the Debian image is written by the rescue flasher (`a03d`, port 1234) instead: it understands sparse images and writes
-the "don't care" chunks as zeros so ext4 never sees leftovers. Do not put `userdata.img` in Odin.
+If Odin stops with `Complete(Write) operation failed` while writing the sparse `userdata.img`, use the rescue flasher
+(`a03d`, port 1234, see step 2): it understands sparse images and writes the "don't care" chunks as zeros so ext4 never
+sees leftovers.
 
 ### Bootloop, or the phone looks dead
 
