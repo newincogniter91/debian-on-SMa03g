@@ -10,6 +10,10 @@ on:
         description: "release that holds the inputs and receives the output"
         required: false
         default: "v1.0"
+      out_tag:
+        description: "release that holds modules.tar.gz and receives the output (empty = same as tag)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -21,6 +25,7 @@ jobs:
     env:
       INPUTS_REPO: newincogniter91/debian-on-SMa03g
       INPUTS_TAG: ${{ github.event.inputs.tag }}
+      OUT_TAG: ${{ github.event.inputs.out_tag || github.event.inputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -29,4 +34,4 @@ jobs:
         run: bash scripts/build-wifi.sh
 
       - name: Upload to the release
-        run: gh release upload "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" --clobber $HOME/work/release/a03-wifi.tar.gz $HOME/work/release/a03-wifi.tar.gz.sha256
+        run: gh release upload "$OUT_TAG" --repo "$GITHUB_REPOSITORY" --clobber $HOME/work/release/a03-wifi.tar.gz $HOME/work/release/a03-wifi.tar.gz.sha256

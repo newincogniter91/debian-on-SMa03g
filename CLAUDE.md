@@ -99,6 +99,15 @@ selectable with the `tag` input). Workflows read inputs with `gh release downloa
 - Order of rebuilds after a kernel change: `kernel` (it dispatches `boot-wdt` and `wifi`). The recovery and userdata
   artifacts do not depend on the kernel.
 
+## Flashlight (torch) work in progress
+
+- Kernel group `torch` (default of `kernel.yml`) enables `LEDS_GPIO`. `scripts/add-torch-dtb.py` (run by `boot-wdt.yml`)
+  adds `gpio-leds` nodes for ap_gpio 138 (chip-en) and 32 (torch-en) to the stock dtb, because the stock dtb holds only
+  the SoC part and the board overlay (dtbo) is not used by our boot image. The GPIO numbers come from the Unisoc
+  UMS9230 1H10/3H10/4H10 reference overlays, not from Samsung sources: **untested on the real phone**.
+- Pre-releases: `kernel.yml`, `boot-wdt.yml` and `wifi.yml` have an `out_tag` input. Inputs are read from `tag`
+  (`v1.0`), outputs go to `out_tag` (created as a pre-release if missing). Publish on `main` only after a phone test.
+
 ## Known gaps
 
 No display or desktop support (the test unit's screen was destroyed; the panel is not managed and never switches off);

@@ -179,6 +179,14 @@ Read `/var/log/a03-wifi.log` and `dmesg | tail -n 80`. The usual cause is a kern
 the package's. Do not enable the `sysv` option group in `kernel.yml`: it changes symbol CRCs and the stock Wi-Fi modules
 no longer load (the workflow refuses to publish such a kernel).
 
+## Flashlight (experimental, pre-release only)
+
+The kernel built with the `torch` option group has `CONFIG_LEDS_GPIO`, and the boot image adds two `gpio-leds` nodes to
+the stock dtb: `/sys/class/leds/white:torch-chip-en` (ap_gpio 138) and `/sys/class/leds/white:torch` (ap_gpio 32).
+The GPIO numbers come from the Unisoc UMS9230 reference overlays (OCP8137 flash IC), **not** from a Samsung SM-A035G
+source: they are untested on the phone, and the LED may stay dark if the IC also needs an I2C setup. Try it with
+`echo 1 > .../white:torch-chip-en/brightness; echo 1 > .../white:torch/brightness` (0 to turn it off).
+
 ## Screen and remote desktop
 
 We did **not** think about the screen: the test unit's display was destroyed, so nothing can be seen and the panel is

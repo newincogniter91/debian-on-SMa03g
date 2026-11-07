@@ -11,10 +11,14 @@ on:
         description: "release that holds the inputs and receives the outputs"
         required: false
         default: "v1.0"
-      groups:
-        description: "extra option groups, comma separated: sysv (breaks the stock Wi-Fi module CRCs), ns, net, netfs, extra (empty = base only)"
+      out_tag:
+        description: "release that receives the outputs (empty = same as tag). Use a pre-release tag to test a kernel before publishing it"
         required: false
         default: ""
+      groups:
+        description: "extra option groups, comma separated: torch (flashlight LEDs), sysv (breaks the stock Wi-Fi module CRCs), ns, net, netfs, extra (empty = base only)"
+        required: false
+        default: "torch"
       chain:
         description: "start boot-wdt and wifi when the build is done (true/false)"
         required: false
@@ -31,6 +35,7 @@ jobs:
     env:
       INPUTS_REPO: newincogniter91/debian-on-SMa03g
       INPUTS_TAG: ${{ github.event.inputs.tag }}
+      OUT_TAG: ${{ github.event.inputs.out_tag || github.event.inputs.tag }}
       BSP_BUILD_FAMILY: qogirl6
       BSP_BUILD_ANDROID_OS: "y"
     steps:
@@ -242,6 +247,7 @@ jobs:
           OPTS="$OPTS -e USB_SERIAL -e USB_SERIAL_FTDI_SIO -e USB_SERIAL_CH341 -e USB_SERIAL_PL2303 -e USB_SERIAL_CP210X"
           for g in $(echo "$GROUPS_IN" | tr ',' ' '); do
             case "$g" in
+              torch) OPTS="$OPTS -e LEDS_GPIO" ;;
               sysv)  OPTS="$OPTS -e SYSVIPC -e POSIX_MQUEUE -e IPC_NS" ;;
               ns)    OPTS="$OPTS -e USER_NS -e PID_NS -e CGROUP_PIDS -e CGROUP_DEVICE -e CFS_BANDWIDTH" ;;
               net)   OPTS="$OPTS -e BRIDGE -e NF_TABLES -e NF_TABLES_INET -e NFT_CT -e NFT_COUNTER -e NFT_LOG -e NFT_LIMIT -e NFT_NAT -e NFT_MASQ -e NFT_REJECT -e NFT_COMPAT" ;;
@@ -253,6 +259,7 @@ jobs:
           scripts/config --file out/.config $OPTS
           if [ "$EXFAT_MODE" = added ]; then scripts/config --file out/.config -e EXFAT_FS --set-str EXFAT_DEFAULT_IOCHARSET utf8; fi
           $MK olddefconfig
+          case ",$GROUPS_IN," in *,torch,*) grep -q '^CONFIG_LEDS_GPIO=y' out/.config || { echo "ERROR: CONFIG_LEDS_GPIO did not stick"; exit 1; } ;; esac
           grep -E 'CONFIG_(DEVTMPFS|DEVTMPFS_MOUNT|FHANDLE|AUTOFS4_FS|CRYPTO_USER_API_HASH|USER_NS|PID_NS|IPC_NS|SYSVIPC|POSIX_MQUEUE|CGROUP_PIDS|CGROUP_DEVICE|CFS_BANDWIDTH|BINFMT_MISC|BRIDGE|NF_TABLES|ZRAM|CRYPTO_LZ4|CRYPTO_LZ4HC|CRYPTO_ZSTD|EXFAT_FS|SDFAT_FS|NTFS_FS|NTFS_RW|HFS_FS|HFSPLUS_FS|UDF_FS|XFS_FS|BTRFS_FS|JFS_FS|NILFS2_FS|SQUASHFS|CIFS|NFS_FS|NFS_V4|ISO9660_FS|F2FS_FS|VFAT_FS|USB_CONFIGFS_(RNDIS|ECM|NCM)|USB_NET_CDCETHER|USB_RTL8152|USB_SERIAL|MODVERSIONS|LOCALVERSION)[A-Z0-9_]*=' out/.config
           echo "--- requested options missing from the final .config:"
           for o in DEVTMPFS DEVTMPFS_MOUNT FHANDLE AUTOFS4_FS CRYPTO_USER_API_HASH USER_NS PID_NS IPC_NS SYSVIPC POSIX_MQUEUE CGROUP_PIDS CGROUP_DEVICE CFS_BANDWIDTH BINFMT_MISC BRIDGE NF_TABLES ZRAM CRYPTO_ZSTD HFS_FS HFSPLUS_FS UDF_FS XFS_FS BTRFS_FS JFS_FS NILFS2_FS SQUASHFS CIFS NFS_V4; do grep -qE "^CONFIG_$o=[ym]" out/.config || echo "MISSING CONFIG_$o"; done
@@ -290,9 +297,14 @@ jobs:
       - name: Upload kernel to the release
         env:
           GH_TOKEN: ${{ github.token }}
+          GROUPS_IN: ${{ github.event.inputs.groups }}
         run: |
           set -x
-          gh release upload "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+          if ! gh release view "$OUT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$OUT_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "$OUT_TAG (pre-release)" --notes "Test build from branch ${{ github.ref_name }}, groups: ${GROUPS_IN}. Not tested on a phone yet."
+          fi
+          gh release upload "$OUT_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             $HOME/work/Image $HOME/work/kernel.config $HOME/work/Module.symvers $HOME/work/crc-report.txt $HOME/work/modules.tar.gz
 
       - name: Start the dependent builds (boot image and Wi-Fi package)
@@ -301,5 +313,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -x
-          gh workflow run boot-wdt.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" -f tag="$INPUTS_TAG"
-          gh workflow run wifi.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" -f tag="$INPUTS_TAG"
+          gh workflow run boot-wdt.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" -f tag="$INPUTS_TAG" -f out_tag="$OUT_TAG"
+          gh workflow run wifi.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" -f tag="$INPUTS_TAG" -f out_tag="$OUT_TAG"

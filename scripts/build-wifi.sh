@@ -7,7 +7,7 @@ W=$HOME/work; REPO=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$W/release" && cd "$W"
 
 echo "=== inputs: kernel modules and stock driver/firmware extract"
-gh release download "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" --pattern 'modules.tar.gz' --pattern 'crc-report.txt' --clobber
+gh release download "${OUT_TAG:-$INPUTS_TAG}" --repo "$GITHUB_REPOSITORY" --pattern 'modules.tar.gz' --pattern 'crc-report.txt' --clobber
 gh release download "$INPUTS_TAG" --repo "$INPUTS_REPO" --pattern 'stock-extract.tar.gz' --clobber
 cat crc-report.txt
 grep -q 'TOTAL problems: 0' crc-report.txt || { echo "ERROR: the stock modules are not compatible with this kernel"; exit 1; }

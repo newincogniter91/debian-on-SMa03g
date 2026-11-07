@@ -165,6 +165,15 @@ Leggi `/var/log/a03-wifi.log` e `dmesg | tail -n 80`. La causa tipica è un kern
 pacchetto. Non abilitare il gruppo `sysv` in `kernel.yml`: cambia i CRC dei simboli e i moduli Wi-Fi originali non si
 caricano più (il workflow rifiuta di pubblicare un kernel così).
 
+## Torcia (sperimentale, solo pre-release)
+
+Il kernel compilato con il gruppo di opzioni `torch` ha `CONFIG_LEDS_GPIO`, e l'immagine di boot aggiunge al dtb
+stock due nodi `gpio-leds`: `/sys/class/leds/white:torch-chip-en` (ap_gpio 138) e `/sys/class/leds/white:torch`
+(ap_gpio 32). I numeri dei GPIO vengono dagli overlay di riferimento Unisoc UMS9230 (IC flash OCP8137), **non** da un
+sorgente Samsung SM-A035G: sul telefono non sono testati, e il LED potrebbe restare spento se l'IC richiede anche una
+configurazione I2C. Prova con `echo 1 > .../white:torch-chip-en/brightness; echo 1 > .../white:torch/brightness`
+(0 per spegnere).
+
 ## Schermo e desktop remoto
 
 **Non** abbiamo pensato allo schermo: il display dell'esemplare di test era distrutto, quindi non si vede nulla e il
