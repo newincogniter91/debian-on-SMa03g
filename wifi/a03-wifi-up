@@ -1,0 +1,27 @@
+#!/bin/bash
+# Loads the Unisoc Wi-Fi driver (sprdwl_ng) with the prerequisites Android normally provides:
+# /dev/block/by-name links, /data/vendor folders and a little uptime before probing.
+L=/var/log/a03-wifi.log
+exec >>"$L" 2>&1
+echo "=== $(date +%T) start (uptime $(cut -d. -f1 /proc/uptime) s, kernel $(uname -r))"
+while [ "$(cut -d. -f1 /proc/uptime)" -lt 30 ]; do sleep 2; done
+mkdir -p /dev/block/by-name /data/vendor/wifi /data/vendor/bluetooth
+for u in /sys/block/mmcblk0/mmcblk0p*/uevent; do
+  [ -f "$u" ] || continue
+  N=$(sed -n 's/^PARTNAME=//p' "$u"); D=$(sed -n 's/^DEVNAME=//p' "$u")
+  [ -n "$N" ] && [ -n "$D" ] && ln -sfn "/dev/$D" "/dev/block/by-name/$N"
+done
+echo "by-name: $(ls /dev/block/by-name | wc -l) links; wcn: $(ls /dev/block/by-name | grep -i -E 'wcn|gnss|marlin' | tr '\n' ' ')"
+if lsmod | grep -q '^sprdwl_ng '; then
+  echo "sprdwl_ng already loaded"
+else
+  if modprobe sprdwl_ng; then echo "sprdwl_ng: ok"
+  else
+    echo "modprobe failed, trying a forced load"
+    modprobe -f sprdwl_ng && echo "sprdwl_ng: ok (forced)" || echo "sprdwl_ng: NOT loaded"
+  fi
+fi
+sleep 8
+echo "interfaces: $(ls /sys/class/net | tr '\n' ' ')"
+dmesg | grep -i -E 'wcn|marlin|sdiohal|sprdwl|wlan|firmware' | tail -n 40
+exit 0

@@ -1,0 +1,305 @@
+name: kernel
+
+# Builds the Linux 4.14.199 kernel for the Galaxy A03 (SM-A035G) from Samsung's open source release,
+# with the options Debian/systemd needs and the PMIC watchdog disabled.
+# Outputs (uploaded to the release): Image, kernel.config, Module.symvers, crc-report.txt, modules.tar.gz
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release that holds the inputs and receives the outputs"
+        required: false
+        default: "v1.0"
+      groups:
+        description: "extra option groups, comma separated: sysv (breaks the stock Wi-Fi module CRCs), ns, net, netfs, extra (empty = base only)"
+        required: false
+        default: ""
+      chain:
+        description: "start boot-wdt and wifi when the build is done (true/false)"
+        required: false
+        default: "true"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      INPUTS_REPO: newincogniter91/debian-on-SMa03g
+      INPUTS_TAG: ${{ github.event.inputs.tag }}
+      BSP_BUILD_FAMILY: qogirl6
+      BSP_BUILD_ANDROID_OS: "y"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          set -x
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift /opt/microsoft
+          df -h /
+
+      - name: Dependencies
+        run: |
+          set -x
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev libncurses-dev gawk \
+            lz4 p7zip-full cpio device-tree-compiler python3 unzip rsync libyaml-dev
+
+      - name: Download kernel sources and stock modules from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -x
+          mkdir -p $HOME/work && cd $HOME/work
+          gh release download "$INPUTS_TAG" --repo "$INPUTS_REPO" --pattern 'SM-A035F_13_Opensource*.zip'
+          gh release download "$INPUTS_TAG" --repo "$INPUTS_REPO" --pattern 'stock-extract.tar.gz'
+          tar -xzf stock-extract.tar.gz out/socko
+          ls -la out/socko
+
+      - name: Extract sources and apply Samsung's incremental patches
+        run: |
+          set -x
+          cd $HOME/work
+          unzip -q SM-A035F_13_Opensource.zip -d base
+          mkdir src && tar -xzf base/Kernel.tar.gz -C src
+          rm -rf base SM-A035F_13_Opensource.zip
+          K=$(find src -path '*arch/arm64/configs/a03_cis_open_defconfig' | head -1 | sed 's#/arch/arm64/configs/.*##')
+          echo "KERNEL_DIR=$(realpath $K)" >> $GITHUB_ENV
+          K=$(realpath $K)
+          for z in $(ls SM-A035F_13_Opensource_*.zip | sort); do
+            d="delta/${z%.zip}"; mkdir -p "$d"; unzip -q "$z" -d "$d"
+            echo "=== $z"; find "$d" -type f | head -30
+            if [ -f "$d/Kernel.tar.gz" ]; then mkdir -p "$d/kt" && tar -xzf "$d/Kernel.tar.gz" -C "$d/kt"; find "$d/kt" -type f | head -30; fi
+            if [ -d "$d/Kernel" ]; then rsync -a "$d/Kernel/" "$K/"; fi
+            if [ -d "$d/kt/Kernel" ]; then rsync -a "$d/kt/Kernel/" "$K/"; elif [ -d "$d/kt" ]; then rsync -a "$d/kt/" "$K/"; fi
+          done
+          echo "Kernel dir: $K"
+          ls "$K" | head -30
+
+      - name: Disable the PMIC watchdog
+        run: |
+          set -x
+          cd "$KERNEL_DIR"
+          cat > $HOME/pmic-wdt.patch <<'PATCHEOF'
+          --- a/drivers/watchdog/sprd_pmic_wdt.c
+          +++ b/drivers/watchdog/sprd_pmic_wdt.c
+          @@ -90,6 +90,38 @@
+           
+           };
+           
+          +static unsigned int sprd_pmic_wdt_rounds;
+          +
+          +static void sprd_pmic_wdt_dump(struct sprd_pmic_wdt *w, const char *tag)
+          +{
+          +	unsigned int ctrl = 0, lo = 0, hi = 0, clo = 0, chi = 0, raw = 0, msk = 0;
+          +	int rc;
+          +
+          +	rc = regmap_read(w->regmap, w->base + SPRD_PMIC_WDT_CTRL, &ctrl);
+          +	regmap_read(w->regmap, w->base + SPRD_PMIC_WDT_LOAD_LOW, &lo);
+          +	regmap_read(w->regmap, w->base + SPRD_PMIC_WDT_LOAD_HIGH, &hi);
+          +	regmap_read(w->regmap, w->base + SPRD_PMIC_WDT_CNT_LOW, &clo);
+          +	regmap_read(w->regmap, w->base + SPRD_PMIC_WDT_CNT_HIGH, &chi);
+          +	regmap_read(w->regmap, w->base + SPRD_PMIC_WDT_INT_RAW, &raw);
+          +	regmap_read(w->regmap, w->base + SPRD_PMIC_WDT_INT_MSK, &msk);
+          +	dev_info(w->dev,
+          +		 "PMICWDT[%s] base=0x%x rc=%d CTRL=0x%x LOAD=0x%x:0x%x CNT=0x%x:0x%x RAW=0x%x MSK=0x%x\n",
+          +		 tag, w->base, rc, ctrl, hi, lo, chi, clo, raw, msk);
+          +}
+          +
+          +static void sprd_pmic_wdt_force_off(struct sprd_pmic_wdt *w)
+          +{
+          +	unsigned int ctrl = 0;
+          +
+          +	regmap_write(w->regmap, w->base + SPRD_PMIC_WDT_LOCK,
+          +		     SPRD_PMIC_WDT_UNLOCK_KEY);
+          +	regmap_read(w->regmap, w->base + SPRD_PMIC_WDT_CTRL, &ctrl);
+          +	ctrl &= ~(SPRD_PMIC_WDT_CNT_EN_BIT | SPRD_PMIC_WDT_RST_EN_BIT |
+          +		  SPRD_PMIC_WDT_INT_EN_BIT);
+          +	regmap_write(w->regmap, w->base + SPRD_PMIC_WDT_CTRL, ctrl);
+          +	regmap_write(w->regmap, w->base + SPRD_PMIC_WDT_LOCK, 0x0);
+          +}
+          +
+           static int sprd_pmic_wdt_enable(struct sprd_pmic_wdt *wdt, bool en)
+           {
+           	int nwrite;
+          @@ -125,6 +157,10 @@
+           	pm_wakeup_event(pmic_wdt->dev, PMIC_WDT_WAKE_UP_MS);
+           	kthread_queue_work(&pmic_wdt->wdt_kworker, &pmic_wdt->wdt_kwork);
+           
+          +	if (++sprd_pmic_wdt_rounds < 12) {
+          +		alarm_forward_now(p, ktime_set(30, 0));
+          +		return ALARMTIMER_RESTART;
+          +	}
+           
+           	return ALARMTIMER_NORESTART;
+           }
+          @@ -135,10 +171,20 @@
+           						 struct sprd_pmic_wdt,
+           						 wdt_kwork);
+           
+          +	static unsigned int runs;
+          +
+           	dev_info(pmic_wdt->dev, "sprd_pimc_wdt_work enter!\n");
+           
+          +	if (runs++ > 0) {
+          +		sprd_pmic_wdt_dump(pmic_wdt, "tick");
+          +		return;
+          +	}
+          +
+          +	sprd_pmic_wdt_dump(pmic_wdt, "t40-pre");
+           	if (sprd_pmic_wdt_enable(pmic_wdt, pmic_wdt->wdten))
+           		dev_err(pmic_wdt->dev, "failed to set pmic wdt %d!\n", pmic_wdt->wdten);
+          +	sprd_pmic_wdt_force_off(pmic_wdt);
+          +	sprd_pmic_wdt_dump(pmic_wdt, "t40-post-off");
+           }
+           
+           static bool sprd_pimc_wdt_en(void)
+          @@ -225,6 +271,7 @@
+           	pmic_wdt->wdten = sprd_pimc_wdt_en();
+           	pmic_wdt->dev = &pdev->dev;
+           	platform_set_drvdata(pdev, pmic_wdt);
+          +	sprd_pmic_wdt_dump(pmic_wdt, "probe");
+           
+           	return ret;
+           }
+          PATCHEOF
+          patch -p1 --dry-run < $HOME/pmic-wdt.patch
+          patch -p1 < $HOME/pmic-wdt.patch
+          grep -c PMICWDT drivers/watchdog/sprd_pmic_wdt.c
+
+      - name: exFAT support (Samsung sdfat or out-of-tree exfat driver)
+        run: |
+          set -x
+          cd "$KERNEL_DIR"
+          ls fs | grep -iE 'exfat|sdfat|ntfs|hfs|udf|xfs|btrfs' || true
+          grep -rn '"exfat"' fs/sdfat fs/exfat 2>/dev/null | head || true
+          if grep -rqs '"exfat"' fs/sdfat fs/exfat; then
+            echo "EXFAT_MODE=builtin" >> $GITHUB_ENV
+          else
+            git clone --depth 1 https://github.com/arter97/exfat-linux $HOME/exfat-linux
+            mkdir -p fs/exfat
+            cp $HOME/exfat-linux/*.c $HOME/exfat-linux/*.h $HOME/exfat-linux/Kconfig $HOME/exfat-linux/Makefile fs/exfat/
+            if ! grep -q 'fs/exfat/Kconfig' fs/Kconfig; then
+              sed -i 's#^source "fs/fat/Kconfig"#&\nsource "fs/exfat/Kconfig"#' fs/Kconfig
+            fi
+            if ! grep -q 'fs/exfat/Kconfig' fs/Kconfig; then
+              echo 'source "fs/exfat/Kconfig"' >> fs/Kconfig
+            fi
+            if ! grep -q 'exfat/' fs/Makefile; then
+              echo 'obj-$(CONFIG_EXFAT_FS) += exfat/' >> fs/Makefile
+            fi
+            echo "EXFAT_MODE=added" >> $GITHUB_ENV
+          fi
+
+      - name: Toolchain (clang-r383902 + gcc 4.9 aarch64)
+        run: |
+          set -x
+          mkdir -p $HOME/tc/clang-r383902 $HOME/tc/gcc
+          ok=0
+          for ref in refs/heads/android11-release refs/tags/android-11.0.0_r1 refs/heads/master-kernel-build-2021; do
+            if curl -fL --retry 3 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/$ref/clang-r383902.tar.gz" -o clang.tgz; then ok=1; break; fi
+          done
+          [ $ok = 1 ] || { echo "clang-r383902 download failed"; exit 1; }
+          tar -xzf clang.tgz -C $HOME/tc/clang-r383902
+          ok=0
+          for ref in refs/heads/android11-release refs/tags/android-11.0.0_r1 refs/heads/master-kernel-build-2021; do
+            if curl -fL --retry 3 "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/$ref.tar.gz" -o gcc.tgz; then ok=1; break; fi
+          done
+          [ $ok = 1 ] || { echo "gcc 4.9 download failed"; exit 1; }
+          tar -xzf gcc.tgz -C $HOME/tc/gcc
+          $HOME/tc/clang-r383902/bin/clang --version
+
+      - name: Build the kernel (Debian/systemd config)
+        env:
+          GROUPS_IN: ${{ github.event.inputs.groups }}
+        run: |
+          set -x
+          cd "$KERNEL_DIR"
+          export PATH=$HOME/tc/clang-r383902/bin:$PATH
+          export DTC_OVERLAY_TEST_EXT=$(pwd)/tools/mkdtimg/ufdt_apply_overlay
+          export DTC_OVERLAY_VTS_EXT=$(pwd)/tools/mkdtimg/ufdt_verify_overlay_host
+          chmod +x tools/mkdtimg/* 2>/dev/null || true
+          # the stock Wi-Fi/BT modules are binary blobs: the vermagic must match our kernel
+          VM=$(strings -a $HOME/work/out/socko/sprdwl_ng.ko | sed -n 's/^vermagic=\([^ ]*\) .*/\1/p' | head -1)
+          LV=${VM#4.14.199}
+          echo "stock vermagic: $VM  ->  LOCALVERSION=$LV"
+          echo "LV=$LV" >> $GITHUB_ENV
+          mkdir -p out
+          MK="make -C $(pwd) O=$(pwd)/out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=$HOME/tc/gcc/bin/aarch64-linux-android- HOSTLOADLIBES_dtc=-lyaml LOCALVERSION=$LV"
+          echo "MK=$MK" >> $GITHUB_ENV
+          $MK a03_cis_open_defconfig
+          OPTS="-e DEVTMPFS -e DEVTMPFS_MOUNT -e FHANDLE -e AUTOFS4_FS -e CRYPTO_USER_API_HASH -e BINFMT_MISC"
+          OPTS="$OPTS -e BLK_DEV_LOOP -e ZRAM -e SWAP -e CRYPTO_LZ4 -e CRYPTO_LZ4HC -e CRYPTO_LZO -e CRYPTO_ZSTD"
+          OPTS="$OPTS -e EXT4_USE_FOR_EXT2 -e NTFS_FS -e NTFS_RW -e HFS_FS -e HFSPLUS_FS -e UDF_FS -e XFS_FS -e BTRFS_FS -e JFS_FS -e NILFS2_FS"
+          OPTS="$OPTS -e SQUASHFS -e SQUASHFS_XZ -e SQUASHFS_ZLIB -e SQUASHFS_LZ4 -e CRAMFS -e MINIX_FS -e ISO9660_FS -e JOLIET -e ZISOFS -e FUSE_FS"
+          OPTS="$OPTS -e USB_CONFIGFS_ECM -e USB_CONFIGFS_NCM -e USB_CONFIGFS_RNDIS -e USB_CONFIGFS_ACM"
+          OPTS="$OPTS -e USB_STORAGE -e USB_UAS -e USB_HID -e HID_GENERIC -e USB_ACM -e USB_USBNET -e USB_NET_CDCETHER -e USB_NET_CDC_NCM"
+          OPTS="$OPTS -e USB_NET_AX8817X -e USB_NET_AX88179_178A -e USB_RTL8152 -e USB_NET_SMSC95XX"
+          OPTS="$OPTS -e USB_SERIAL -e USB_SERIAL_FTDI_SIO -e USB_SERIAL_CH341 -e USB_SERIAL_PL2303 -e USB_SERIAL_CP210X"
+          for g in $(echo "$GROUPS_IN" | tr ',' ' '); do
+            case "$g" in
+              sysv)  OPTS="$OPTS -e SYSVIPC -e POSIX_MQUEUE -e IPC_NS" ;;
+              ns)    OPTS="$OPTS -e USER_NS -e PID_NS -e CGROUP_PIDS -e CGROUP_DEVICE -e CFS_BANDWIDTH" ;;
+              net)   OPTS="$OPTS -e BRIDGE -e NF_TABLES -e NF_TABLES_INET -e NFT_CT -e NFT_COUNTER -e NFT_LOG -e NFT_LIMIT -e NFT_NAT -e NFT_MASQ -e NFT_REJECT -e NFT_COMPAT" ;;
+              netfs) OPTS="$OPTS -e NETWORK_FILESYSTEMS -e CIFS -e NFS_FS -e NFS_V3 -e NFS_V4" ;;
+              extra) OPTS="$OPTS -e TUN -e F2FS_FS -e VFAT_FS -e OVERLAY_FS -e EXT4_FS_POSIX_ACL -e EXT4_FS_SECURITY -e TMPFS_POSIX_ACL -e TMPFS_XATTR -e ZRAM_WRITEBACK -e BT -e BT_RFCOMM -e BT_BNEP -e BT_HIDP -e INOTIFY_USER -e CGROUP_FREEZER -e CGROUP_SCHED -e FAIR_GROUP_SCHED -e MEMCG -e MEMCG_SWAP" ;;
+            esac
+          done
+          echo "groups: '$GROUPS_IN'"; echo "options: $OPTS"
+          scripts/config --file out/.config $OPTS
+          if [ "$EXFAT_MODE" = added ]; then scripts/config --file out/.config -e EXFAT_FS --set-str EXFAT_DEFAULT_IOCHARSET utf8; fi
+          $MK olddefconfig
+          grep -E 'CONFIG_(DEVTMPFS|DEVTMPFS_MOUNT|FHANDLE|AUTOFS4_FS|CRYPTO_USER_API_HASH|USER_NS|PID_NS|IPC_NS|SYSVIPC|POSIX_MQUEUE|CGROUP_PIDS|CGROUP_DEVICE|CFS_BANDWIDTH|BINFMT_MISC|BRIDGE|NF_TABLES|ZRAM|CRYPTO_LZ4|CRYPTO_LZ4HC|CRYPTO_ZSTD|EXFAT_FS|SDFAT_FS|NTFS_FS|NTFS_RW|HFS_FS|HFSPLUS_FS|UDF_FS|XFS_FS|BTRFS_FS|JFS_FS|NILFS2_FS|SQUASHFS|CIFS|NFS_FS|NFS_V4|ISO9660_FS|F2FS_FS|VFAT_FS|USB_CONFIGFS_(RNDIS|ECM|NCM)|USB_NET_CDCETHER|USB_RTL8152|USB_SERIAL|MODVERSIONS|LOCALVERSION)[A-Z0-9_]*=' out/.config
+          echo "--- requested options missing from the final .config:"
+          for o in DEVTMPFS DEVTMPFS_MOUNT FHANDLE AUTOFS4_FS CRYPTO_USER_API_HASH USER_NS PID_NS IPC_NS SYSVIPC POSIX_MQUEUE CGROUP_PIDS CGROUP_DEVICE CFS_BANDWIDTH BINFMT_MISC BRIDGE NF_TABLES ZRAM CRYPTO_ZSTD HFS_FS HFSPLUS_FS UDF_FS XFS_FS BTRFS_FS JFS_FS NILFS2_FS SQUASHFS CIFS NFS_V4; do grep -qE "^CONFIG_$o=[ym]" out/.config || echo "MISSING CONFIG_$o"; done
+          $MK -j$(nproc)
+          cat out/include/config/kernel.release
+          ls -la out/arch/arm64/boot/
+
+      - name: Check stock module compatibility (CRC and vermagic)
+        run: |
+          set -x
+          cd "$KERNEL_DIR"
+          echo "our release: $(cat out/include/config/kernel.release)"
+          strings -a $HOME/work/out/socko/sprdwl_ng.ko | grep '^vermagic='
+          python3 $GITHUB_WORKSPACE/scripts/crc-check.py out/Module.symvers $HOME/work/out/socko/sprdwl_ng.ko $HOME/work/out/socko/sprdbt_tty.ko | tee $HOME/work/crc-report.txt
+          if ! grep -q 'TOTAL problems: 0' $HOME/work/crc-report.txt; then
+            echo "ERROR: the stock Wi-Fi/BT modules are not compatible with this kernel (groups: ${{ github.event.inputs.groups }}): not publishing"
+            exit 1
+          fi
+
+      - name: Package modules
+        run: |
+          set -x
+          cd "$KERNEL_DIR"
+          rm -rf $HOME/modroot
+          $MK modules_install INSTALL_MOD_PATH=$HOME/modroot INSTALL_MOD_STRIP=1 DEPMOD=/bin/true
+          rm -f $HOME/modroot/lib/modules/*/build $HOME/modroot/lib/modules/*/source
+          REL=$(ls $HOME/modroot/lib/modules | head -1)
+          echo "modules release: $REL"; find $HOME/modroot -name '*.ko' | wc -l
+          tar -czf $HOME/work/modules.tar.gz -C $HOME/modroot lib
+          cp out/arch/arm64/boot/Image $HOME/work/Image
+          cp out/.config $HOME/work/kernel.config
+          cp out/Module.symvers $HOME/work/Module.symvers
+          ls -la $HOME/work
+
+      - name: Upload kernel to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -x
+          gh release upload "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            $HOME/work/Image $HOME/work/kernel.config $HOME/work/Module.symvers $HOME/work/crc-report.txt $HOME/work/modules.tar.gz
+
+      - name: Start the dependent builds (boot image and Wi-Fi package)
+        if: github.event.inputs.chain == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -x
+          gh workflow run boot-wdt.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" -f tag="$INPUTS_TAG"
+          gh workflow run wifi.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" -f tag="$INPUTS_TAG"

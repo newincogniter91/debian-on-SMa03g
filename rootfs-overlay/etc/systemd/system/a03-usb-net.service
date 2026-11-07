@@ -1,0 +1,11 @@
+[Unit]
+Description=USB RNDIS network with static IP 192.168.7.2/24
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/a03-usb-net
+
+[Install]
+WantedBy=multi-user.target

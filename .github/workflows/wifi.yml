@@ -1,0 +1,32 @@
+name: wifi
+
+# Builds a03-wifi.tar.gz: stock Unisoc Wi-Fi modules + firmware + install.sh, to extract on the running Debian.
+# Needs the kernel workflow to have uploaded modules.tar.gz and crc-report.txt first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release that holds the inputs and receives the output"
+        required: false
+        default: "v1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  wifi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      INPUTS_REPO: newincogniter91/debian-on-SMa03g
+      INPUTS_TAG: ${{ github.event.inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the Wi-Fi package
+        run: bash scripts/build-wifi.sh
+
+      - name: Upload to the release
+        run: gh release upload "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" --clobber $HOME/work/release/a03-wifi.tar.gz $HOME/work/release/a03-wifi.tar.gz.sha256

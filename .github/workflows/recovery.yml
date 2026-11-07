@@ -1,0 +1,63 @@
+name: recovery
+
+# Builds AP_REC_KSTOCK_VBSTOCK_A03G.tar: Samsung's stock recovery kernel with our rescue ramdisk,
+# plus the stock vbmeta. Flash it with Odin (AP slot), then boot into recovery to get the rescue shell.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release that holds the inputs and receives the output"
+        required: false
+        default: "v1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      INPUTS_REPO: newincogniter91/debian-on-SMa03g
+      INPUTS_TAG: ${{ github.event.inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross dosfstools cpio python3 git binutils xxd curl file
+
+      - name: Download the stock recovery and vbmeta
+        run: |
+          mkdir -p $HOME/work/release && cd $HOME/work
+          gh release download "$INPUTS_TAG" --repo "$INPUTS_REPO" --pattern 'stock-extract.tar.gz'
+          tar -xzf stock-extract.tar.gz out/recovery.img out/vbmeta.img
+          ls -la out
+
+      - name: Build the rescue ramdisk
+        run: bash scripts/build-initramfs.sh recovery $HOME/work/ramdisk-rec.gz
+
+      - name: Build recovery.img (stock kernel + our ramdisk)
+        run: |
+          set -eux
+          cd $HOME/work
+          git clone -q --depth 1 https://android.googlesource.com/platform/system/tools/mkbootimg "$HOME/mkbootimg" \
+            || git clone -q --depth 1 https://github.com/osm0sis/mkbootimg "$HOME/mkbootimg"
+          python3 "$HOME/mkbootimg/unpack_bootimg.py" --boot_img out/recovery.img --out stock-rec --format=mkbootimg | tee stock-rec-args.txt
+          ARGS=$(grep -- '--header_version' stock-rec-args.txt | tail -n1 | sed -e 's#stock-rec/ramdisk#ramdisk-rec.gz#')
+          echo "arguments: $ARGS"
+          eval python3 "$HOME/mkbootimg/mkbootimg.py" $ARGS -o recovery.img
+          python3 "$HOME/mkbootimg/unpack_bootimg.py" --boot_img recovery.img --out new-rec
+          cmp new-rec/kernel stock-rec/kernel && echo "kernel is the stock one"
+          [ "$(stat -c %s recovery.img)" -lt 67108864 ]
+          mkdir ap && cp recovery.img ap/recovery.img && cp out/vbmeta.img ap/vbmeta.img
+          ( cd ap && tar --format=ustar --owner=0 --group=0 --numeric-owner -cf "$HOME/work/release/AP_REC_KSTOCK_VBSTOCK_A03G.tar" recovery.img vbmeta.img )
+          cd release
+          tar -tvf AP_REC_KSTOCK_VBSTOCK_A03G.tar
+          sha256sum AP_REC_KSTOCK_VBSTOCK_A03G.tar | tee AP_REC_KSTOCK_VBSTOCK_A03G.tar.sha256
+
+      - name: Upload to the release
+        run: gh release upload "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" --clobber $HOME/work/release/*

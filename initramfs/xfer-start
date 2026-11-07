@@ -1,0 +1,21 @@
+#!/bin/sh
+# exposes a 4 GiB FAT32 USB disk stored at the end of the userdata partition (offset 40 GiB),
+# so the PC can copy a flashable .tar onto it at USB speed. This overwrites that area of userdata.
+UD=""
+for u in /sys/class/block/*/uevent; do
+  if grep -qx "PARTNAME=userdata" "$u" 2>/dev/null; then d=${u%/uevent}; UD=/dev/${d##*/}; break; fi
+done
+[ -n "$UD" ] || { echo "ERROR: userdata partition not found"; exit 1; }
+LUN=/sys/kernel/config/usb_gadget/g1/functions/mass_storage.0/lun.0
+[ -d "$LUN" ] || { echo "ERROR: the USB gadget has no mass_storage function"; exit 1; }
+echo "" > $LUN/file 2>/dev/null
+losetup -d /dev/loop0 2>/dev/null
+mdev -s 2>/dev/null
+OFS=42949672960
+SZ=4294967296
+losetup -o $OFS -s $SZ /dev/loop0 "$UD" 2>/dev/null || losetup -o $OFS /dev/loop0 "$UD" || { echo "ERROR: losetup failed"; exit 1; }
+zcat /fat32-head.gz | dd of=/dev/loop0 bs=1M conv=notrunc 2>/dev/null
+sync
+echo /dev/loop0 > $LUN/file || { echo "ERROR: cannot expose the disk"; exit 1; }
+echo "OK: the PC now sees a 4 GiB USB disk (A03XFER)."
+echo "Copy USERDATA_MIN_A03G.tar onto it, eject the disk safely, then run here: xfer-flash"

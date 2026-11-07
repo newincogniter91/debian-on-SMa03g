@@ -1,0 +1,13 @@
+[Unit]
+Description=Grow the root filesystem to the whole userdata partition (first boot only)
+DefaultDependencies=no
+After=local-fs.target
+ConditionPathExists=!/var/lib/a03-resized
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'resize2fs "$(findmnt -no SOURCE /)" && touch /var/lib/a03-resized'
+
+[Install]
+WantedBy=multi-user.target

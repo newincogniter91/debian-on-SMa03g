@@ -1,0 +1,13 @@
+#!/bin/sh
+# reads the .tar from the USB disk prepared by xfer-start and writes its images to the partitions
+LUN=/sys/kernel/config/usb_gadget/g1/functions/mass_storage.0/lun.0
+echo "" > $LUN/file 2>/dev/null
+sync
+mkdir -p /sd
+umount /sd 2>/dev/null
+mount -t vfat -o ro /dev/loop0 /sd || { echo "ERROR: mount failed (did you run xfer-start and copy the file?)"; exit 1; }
+ls -l /sd
+F=$(ls /sd | grep -i '\.tar$' | head -n1)
+[ -n "$F" ] || { echo "ERROR: no .tar file found on the disk"; exit 1; }
+echo "writing /sd/$F ..."
+a03d --flash < "/sd/$F"

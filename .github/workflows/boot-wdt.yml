@@ -1,0 +1,69 @@
+name: boot-wdt
+
+# Builds AP_BOOT_WDT_A03G.tar: boot.img = our kernel (PMIC watchdog disabled) + our initramfs that boots Debian
+# from userdata (falls back to the rescue shell). Needs the kernel workflow to have uploaded "Image" first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release that holds the inputs and receives the output"
+        required: false
+        default: "v1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      INPUTS_REPO: newincogniter91/debian-on-SMa03g
+      INPUTS_TAG: ${{ github.event.inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross dosfstools cpio python3 git binutils xxd curl file
+
+      - name: Download the kernel and the stock boot.img
+        run: |
+          mkdir -p $HOME/work/release && cd $HOME/work
+          gh release download "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" --pattern 'Image' --clobber
+          gh release download "$INPUTS_TAG" --repo "$INPUTS_REPO" --pattern 'stock-extract.tar.gz' --clobber
+          tar -xzf stock-extract.tar.gz out/boot.img
+          ls -la Image out
+          strings -a Image | grep '^Linux version ' | head -1
+          echo "PMICWDT strings in the kernel: $(strings -a Image | grep -c PMICWDT)"
+          test "$(strings -a Image | grep -c PMICWDT)" -gt 0
+
+      - name: Build the boot ramdisk
+        run: bash scripts/build-initramfs.sh boot $HOME/work/ramdisk.gz
+
+      - name: Build boot.img
+        run: |
+          set -eux
+          cd $HOME/work
+          git clone -q --depth 1 https://android.googlesource.com/platform/system/tools/mkbootimg "$HOME/mkbootimg" \
+            || git clone -q --depth 1 https://github.com/osm0sis/mkbootimg "$HOME/mkbootimg"
+          python3 "$HOME/mkbootimg/unpack_bootimg.py" --boot_img out/boot.img --out stock-boot --format=mkbootimg | tee stock-boot-args.txt
+          python3 "$HOME/mkbootimg/mkbootimg.py" --header_version 2 --kernel Image --ramdisk ramdisk.gz --dtb stock-boot/dtb \
+            --base 0x0 --kernel_offset 0x8000 --ramdisk_offset 0x1000000 --second_offset 0x0 --tags_offset 0x100 --dtb_offset 0x1f00000 \
+            --pagesize 2048 --os_version 11.0.0 --os_patch_level 2025-08 --board SRPUI23C008 \
+            --cmdline 'console=ttyS1,115200n8' -o boot.img
+          python3 "$HOME/mkbootimg/unpack_bootimg.py" --boot_img boot.img --out new-boot
+          cmp new-boot/kernel Image && echo "kernel in boot.img = our Image"
+          cmp new-boot/dtb stock-boot/dtb && echo "dtb = stock dtb"
+          [ "$(stat -c %s boot.img)" -lt 67108864 ]
+          mkdir ap && cp boot.img ap/boot.img
+          ( cd ap && tar --format=ustar --owner=0 --group=0 --numeric-owner -cf "$HOME/work/release/AP_BOOT_WDT_A03G.tar" boot.img )
+          cd release
+          tar -tvf AP_BOOT_WDT_A03G.tar
+          sha256sum AP_BOOT_WDT_A03G.tar | tee AP_BOOT_WDT_A03G.tar.sha256
+
+      - name: Upload to the release
+        run: gh release upload "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" --clobber $HOME/work/release/*

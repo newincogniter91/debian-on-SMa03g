@@ -1,0 +1,45 @@
+name: userdata
+
+# Builds USERDATA_MIN_A03G.tar: minimal Debian 12 arm64 (systemd + ssh root/1234 + USB network) as a sparse ext4 image.
+# It is written to the phone from the rescue shell (a03d), not with Odin.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release that receives the output"
+        required: false
+        default: "v1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  userdata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      INPUTS_TAG: ${{ github.event.inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift /opt/microsoft
+          df -h /
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap qemu-user-static binfmt-support debian-archive-keyring rsync android-sdk-libsparse-utils e2fsprogs
+          sudo update-binfmts --enable qemu-aarch64 || true
+
+      - name: Build the Debian image
+        run: bash scripts/build-userdata.sh
+
+      - name: Upload to the release
+        run: |
+          cd $HOME/work/release
+          sha256sum USERDATA_MIN_A03G.tar | tee USERDATA_MIN_A03G.tar.sha256
+          gh release upload "$INPUTS_TAG" --repo "$GITHUB_REPOSITORY" --clobber USERDATA_MIN_A03G.tar USERDATA_MIN_A03G.tar.sha256

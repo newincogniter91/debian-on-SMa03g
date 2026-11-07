@@ -1,0 +1,13 @@
+[Unit]
+Description=Wi-Fi Unisoc (sprdwl_ng)
+After=local-fs.target systemd-udevd.service
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=240
+ExecStart=/usr/local/sbin/a03-wifi-up
+
+[Install]
+WantedBy=multi-user.target
