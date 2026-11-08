@@ -23,6 +23,10 @@ on:
         description: "start boot-wdt and wifi when the build is done (true/false)"
         required: false
         default: "true"
+      crc_patch:
+        description: "true = publish even if the stock Wi-Fi module CRCs differ (every imported symbol must still exist); the Wi-Fi package then rewrites the CRCs. Only safe when the options do not change the structs the driver uses"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -276,8 +280,12 @@ jobs:
           strings -a $HOME/work/out/socko/sprdwl_ng.ko | grep '^vermagic='
           python3 $GITHUB_WORKSPACE/scripts/crc-check.py out/Module.symvers $HOME/work/out/socko/sprdwl_ng.ko $HOME/work/out/socko/sprdbt_tty.ko | tee $HOME/work/crc-report.txt
           if ! grep -q 'TOTAL problems: 0' $HOME/work/crc-report.txt; then
-            echo "ERROR: the stock Wi-Fi/BT modules are not compatible with this kernel (groups: ${{ github.event.inputs.groups }}): not publishing"
-            exit 1
+            if [ "${{ github.event.inputs.crc_patch }}" = true ] && grep -q 'TOTAL missing: 0' $HOME/work/crc-report.txt; then
+              echo "WARNING: the CRCs differ but every imported symbol exists: crc_patch=true, the Wi-Fi package will rewrite them"
+            else
+              echo "ERROR: the stock Wi-Fi/BT modules are not compatible with this kernel (groups: ${{ github.event.inputs.groups }}): not publishing"
+              exit 1
+            fi
           fi
 
       - name: Package modules
@@ -315,4 +323,4 @@ jobs:
         run: |
           set -x
           gh workflow run boot-wdt.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" -f tag="$INPUTS_TAG" -f out_tag="$OUT_TAG"
-          gh workflow run wifi.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" -f tag="$INPUTS_TAG" -f out_tag="$OUT_TAG"
+          gh workflow run wifi.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" -f tag="$INPUTS_TAG" -f out_tag="$OUT_TAG" -f crc_patch="${{ github.event.inputs.crc_patch }}"

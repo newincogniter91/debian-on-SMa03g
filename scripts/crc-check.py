@@ -20,6 +20,7 @@ for l in open(sys.argv[1]):
     p = l.split()
     if len(p) >= 2: symvers[p[1]] = int(p[0], 16)
 tot = 0
+tot_missing = 0
 for ko in sys.argv[2:]:
     v = sections(ko).get("__versions", b"")
     bad, missing, n = [], [], 0
@@ -34,4 +35,6 @@ for ko in sys.argv[2:]:
     for b in bad[:40]: print("   DIFFERENT %s stock=%08x ours=%08x" % b)
     for m in missing[:40]: print("   MISSING", m)
     tot += len(bad) + len(missing)
+    tot_missing += len(missing)
+print("TOTAL missing:", tot_missing)
 print("TOTAL problems:", tot)

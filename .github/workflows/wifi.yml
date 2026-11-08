@@ -14,6 +14,10 @@ on:
         description: "release that holds modules.tar.gz and receives the output (empty = same as tag)"
         required: false
         default: ""
+      crc_patch:
+        description: "true = rewrite the CRCs of the stock Wi-Fi module to match the kernel (see kernel.yml)"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -27,6 +31,7 @@ jobs:
       INPUTS_TAG: ${{ github.event.inputs.tag }}
       OUT_TAG: ${{ github.event.inputs.out_tag || github.event.inputs.tag }}
       GH_TOKEN: ${{ github.token }}
+      CRC_PATCH: ${{ github.event.inputs.crc_patch }}
     steps:
       - uses: actions/checkout@v4
 
