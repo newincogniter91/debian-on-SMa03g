@@ -16,7 +16,7 @@ on:
         required: false
         default: ""
       groups:
-        description: "extra option groups, comma separated: torch (flashlight LEDs), sysv (breaks the stock Wi-Fi module CRCs), ns, net, netfs, extra (empty = base only)"
+        description: "extra option groups, comma separated: torch (flashlight LEDs), sysv (breaks the stock Wi-Fi module CRCs), mq (POSIX mqueue + IPC namespace, no SysV), ns, net, netfs, extra (empty = base only)"
         required: false
         default: "torch"
       chain:
@@ -249,8 +249,9 @@ jobs:
             case "$g" in
               torch) OPTS="$OPTS -e LEDS_GPIO" ;;
               sysv)  OPTS="$OPTS -e SYSVIPC -e POSIX_MQUEUE -e IPC_NS" ;;
+              mq)    OPTS="$OPTS -e POSIX_MQUEUE -e IPC_NS" ;;
               ns)    OPTS="$OPTS -e USER_NS -e PID_NS -e CGROUP_PIDS -e CGROUP_DEVICE -e CFS_BANDWIDTH" ;;
-              net)   OPTS="$OPTS -e BRIDGE -e NF_TABLES -e NF_TABLES_INET -e NFT_CT -e NFT_COUNTER -e NFT_LOG -e NFT_LIMIT -e NFT_NAT -e NFT_MASQ -e NFT_REJECT -e NFT_COMPAT" ;;
+              net)   OPTS="$OPTS -e BRIDGE -e BRIDGE_NETFILTER -e NF_TABLES -e NF_TABLES_INET -e NFT_CT -e NFT_COUNTER -e NFT_LOG -e NFT_LIMIT -e NFT_NAT -e NFT_MASQ -e NFT_REJECT -e NFT_COMPAT" ;;
               netfs) OPTS="$OPTS -e NETWORK_FILESYSTEMS -e CIFS -e NFS_FS -e NFS_V3 -e NFS_V4" ;;
               extra) OPTS="$OPTS -e TUN -e F2FS_FS -e VFAT_FS -e OVERLAY_FS -e EXT4_FS_POSIX_ACL -e EXT4_FS_SECURITY -e TMPFS_POSIX_ACL -e TMPFS_XATTR -e ZRAM_WRITEBACK -e BT -e BT_RFCOMM -e BT_BNEP -e BT_HIDP -e INOTIFY_USER -e CGROUP_FREEZER -e CGROUP_SCHED -e FAIR_GROUP_SCHED -e MEMCG -e MEMCG_SWAP" ;;
             esac
@@ -262,7 +263,7 @@ jobs:
           case ",$GROUPS_IN," in *,torch,*) grep -q '^CONFIG_LEDS_GPIO=y' out/.config || { echo "ERROR: CONFIG_LEDS_GPIO did not stick"; exit 1; } ;; esac
           grep -E 'CONFIG_(DEVTMPFS|DEVTMPFS_MOUNT|FHANDLE|AUTOFS4_FS|CRYPTO_USER_API_HASH|USER_NS|PID_NS|IPC_NS|SYSVIPC|POSIX_MQUEUE|CGROUP_PIDS|CGROUP_DEVICE|CFS_BANDWIDTH|BINFMT_MISC|BRIDGE|NF_TABLES|ZRAM|CRYPTO_LZ4|CRYPTO_LZ4HC|CRYPTO_ZSTD|EXFAT_FS|SDFAT_FS|NTFS_FS|NTFS_RW|HFS_FS|HFSPLUS_FS|UDF_FS|XFS_FS|BTRFS_FS|JFS_FS|NILFS2_FS|SQUASHFS|CIFS|NFS_FS|NFS_V4|ISO9660_FS|F2FS_FS|VFAT_FS|USB_CONFIGFS_(RNDIS|ECM|NCM)|USB_NET_CDCETHER|USB_RTL8152|USB_SERIAL|MODVERSIONS|LOCALVERSION)[A-Z0-9_]*=' out/.config
           echo "--- requested options missing from the final .config:"
-          for o in DEVTMPFS DEVTMPFS_MOUNT FHANDLE AUTOFS4_FS CRYPTO_USER_API_HASH USER_NS PID_NS IPC_NS SYSVIPC POSIX_MQUEUE CGROUP_PIDS CGROUP_DEVICE CFS_BANDWIDTH BINFMT_MISC BRIDGE NF_TABLES ZRAM CRYPTO_ZSTD HFS_FS HFSPLUS_FS UDF_FS XFS_FS BTRFS_FS JFS_FS NILFS2_FS SQUASHFS CIFS NFS_V4; do grep -qE "^CONFIG_$o=[ym]" out/.config || echo "MISSING CONFIG_$o"; done
+          for o in DEVTMPFS DEVTMPFS_MOUNT FHANDLE AUTOFS4_FS CRYPTO_USER_API_HASH USER_NS PID_NS IPC_NS SYSVIPC POSIX_MQUEUE CGROUP_PIDS CGROUP_DEVICE CFS_BANDWIDTH BINFMT_MISC BRIDGE BRIDGE_NETFILTER NF_TABLES ZRAM CRYPTO_ZSTD HFS_FS HFSPLUS_FS UDF_FS XFS_FS BTRFS_FS JFS_FS NILFS2_FS SQUASHFS CIFS NFS_V4; do grep -qE "^CONFIG_$o=[ym]" out/.config || echo "MISSING CONFIG_$o"; done
           $MK -j$(nproc)
           cat out/include/config/kernel.release
           ls -la out/arch/arm64/boot/
