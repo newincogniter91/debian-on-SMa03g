@@ -62,7 +62,7 @@ jobs:
           python3 "$HOME/mkbootimg/mkbootimg.py" --header_version 2 --kernel Image --ramdisk ramdisk.gz --dtb torch.dtb \
             --base 0x0 --kernel_offset 0x8000 --ramdisk_offset 0x1000000 --second_offset 0x0 --tags_offset 0x100 --dtb_offset 0x1f00000 \
             --pagesize 2048 --os_version 11.0.0 --os_patch_level 2025-08 --board SRPUI23C008 \
-            --cmdline 'console=ttyS1,115200n8 systemd.unified_cgroup_hierarchy=0' -o boot.img
+            --cmdline 'console=ttyS1,115200n8 systemd.unified_cgroup_hierarchy=0 security=none' -o boot.img
           python3 "$HOME/mkbootimg/unpack_bootimg.py" --boot_img boot.img --out new-boot
           cmp new-boot/kernel Image && echo "kernel in boot.img = our Image"
           cmp new-boot/dtb torch.dtb && echo "dtb = stock dtb + torch LEDs"
