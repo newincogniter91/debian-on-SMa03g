@@ -174,6 +174,17 @@ sorgente Samsung SM-A035G: sul telefono non sono testati, e il LED potrebbe rest
 configurazione I2C. Prova con `echo 1 > .../white:torch-chip-en/brightness; echo 1 > .../white:torch/brightness`
 (0 per spegnere).
 
+## Chiavette USB e filesystem
+
+Dalla `v2.0` il kernel risponde a `mount -t exfat` (driver `arter97/exfat-linux`, compilato dentro; c'è anche `sdfat` di
+Samsung, ma si registra solo con il nome `sdfat`). Già supportati prima: `vfat`/`msdos`, `ntfs`, `ext2`/`ext3`/`ext4`,
+`hfs`/`hfsplus`, `udf`, `iso9660`, `xfs`, `btrfs`, `f2fs`, `jfs`, `nilfs2`, `squashfs`, `cramfs`, `minix`, FUSE. Con il
+gruppo di opzioni `fs` ci sono anche hpfs, reiserfs, ufs, sysv, qnx4/6, bfs, efs, romfs, omfs, affs, adfs, befs e
+freevxfs (in sola lettura dove la scrittura del driver è rischiosa). Tutto è dentro il kernel: nessun modulo da
+installare. **Non testato sul telefono.** L'immagine Debian minima non ha strumenti per i filesystem, quindi sul telefono
+esegui `apt install exfatprogs ntfs-3g dosfstools` (e `e2fsprogs`, `xfsprogs`, `btrfs-progs`, `f2fs-tools` se devi
+formattare o riparare quelli). Non c'è l'automount: `mount /dev/sda1 /mnt`.
+
 ## Schermo e desktop remoto
 
 **Non** abbiamo pensato allo schermo: il display dell'esemplare di test era distrutto, quindi non si vede nulla e il

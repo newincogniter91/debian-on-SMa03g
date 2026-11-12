@@ -16,11 +16,15 @@ on:
         required: false
         default: ""
       groups:
-        description: "extra option groups, comma separated: torch (flashlight LEDs), sysv (breaks the stock Wi-Fi module CRCs), mq (POSIX mqueue + IPC namespace, no SysV), ns, net, netfs, extra (empty = base only)"
+        description: "extra option groups, comma separated: torch (flashlight LEDs), fs (extra read-only filesystems: hpfs, reiserfs, ufs, sysv, qnx4/6, bfs, efs, romfs, omfs, affs, adfs, befs, freevxfs), sysv (breaks the stock Wi-Fi module CRCs), mq (POSIX mqueue + IPC namespace, no SysV), ns, net, netfs, extra (empty = base only)"
         required: false
         default: "torch"
       chain:
         description: "start boot-wdt and wifi when the build is done (true/false)"
+        required: false
+        default: "true"
+      prerelease:
+        description: "true = create the release as a pre-release when it does not exist yet; false = a real release (e.g. v2.0)"
         required: false
         default: "true"
       crc_patch:
@@ -185,8 +189,10 @@ jobs:
           set -x
           cd "$KERNEL_DIR"
           ls fs | grep -iE 'exfat|sdfat|ntfs|hfs|udf|xfs|btrfs' || true
-          grep -rn '"exfat"' fs/sdfat fs/exfat 2>/dev/null | head || true
-          if grep -rqs '"exfat"' fs/sdfat fs/exfat; then
+          grep -rnE '\.name[[:space:]]*=' fs/sdfat/sdfat.c fs/exfat 2>/dev/null | head || true
+          # Samsung's sdfat registers only the fs type "sdfat" ("exfat" in sdfat.c is just a label for messages), so
+          # "mount -t exfat" needs a driver that registers .name = "exfat": builtin only if one already does
+          if grep -rqsE '\.name[[:space:]]*=[[:space:]]*"exfat"' fs/sdfat fs/exfat; then
             echo "EXFAT_MODE=builtin" >> $GITHUB_ENV
           else
             git clone --depth 1 https://github.com/arter97/exfat-linux $HOME/exfat-linux
@@ -252,6 +258,7 @@ jobs:
           for g in $(echo "$GROUPS_IN" | tr ',' ' '); do
             case "$g" in
               torch) OPTS="$OPTS -e LEDS_GPIO" ;;
+              fs)    OPTS="$OPTS -e HPFS_FS -e REISERFS_FS -e UFS_FS -e SYSV_FS -e QNX4FS_FS -e QNX6FS_FS -e BFS_FS -e EFS_FS -e ROMFS_FS -e OMFS_FS -e AFFS_FS -e ADFS_FS -e BEFS_FS -e VXFS_FS" ;;
               sysv)  OPTS="$OPTS -e SYSVIPC -e POSIX_MQUEUE -e IPC_NS" ;;
               mq)    OPTS="$OPTS -e POSIX_MQUEUE -e IPC_NS" ;;
               ns)    OPTS="$OPTS -e USER_NS -e PID_NS -e CGROUP_PIDS -e CGROUP_DEVICE -e CFS_BANDWIDTH" ;;
@@ -264,11 +271,14 @@ jobs:
           scripts/config --file out/.config $OPTS
           if [ "$EXFAT_MODE" = added ]; then scripts/config --file out/.config -e EXFAT_FS --set-str EXFAT_DEFAULT_IOCHARSET utf8; fi
           $MK olddefconfig
+          if [ "$EXFAT_MODE" = added ]; then grep -q '^CONFIG_EXFAT_FS=y' out/.config || { echo "ERROR: CONFIG_EXFAT_FS did not stick"; exit 1; }; fi
+          case ",$GROUPS_IN," in *,fs,*) for o in HPFS_FS REISERFS_FS UFS_FS SYSV_FS QNX4FS_FS QNX6FS_FS BFS_FS EFS_FS ROMFS_FS OMFS_FS AFFS_FS ADFS_FS BEFS_FS VXFS_FS; do grep -qE "^CONFIG_$o=y" out/.config || echo "MISSING CONFIG_$o (fs group)"; done ;; esac
           case ",$GROUPS_IN," in *,torch,*) grep -q '^CONFIG_LEDS_GPIO=y' out/.config || { echo "ERROR: CONFIG_LEDS_GPIO did not stick"; exit 1; } ;; esac
           grep -E 'CONFIG_(DEVTMPFS|DEVTMPFS_MOUNT|FHANDLE|AUTOFS4_FS|CRYPTO_USER_API_HASH|USER_NS|PID_NS|IPC_NS|SYSVIPC|POSIX_MQUEUE|CGROUP_PIDS|CGROUP_DEVICE|CFS_BANDWIDTH|BINFMT_MISC|BRIDGE|NF_TABLES|ZRAM|CRYPTO_LZ4|CRYPTO_LZ4HC|CRYPTO_ZSTD|EXFAT_FS|SDFAT_FS|NTFS_FS|NTFS_RW|HFS_FS|HFSPLUS_FS|UDF_FS|XFS_FS|BTRFS_FS|JFS_FS|NILFS2_FS|SQUASHFS|CIFS|NFS_FS|NFS_V4|ISO9660_FS|F2FS_FS|VFAT_FS|USB_CONFIGFS_(RNDIS|ECM|NCM)|USB_NET_CDCETHER|USB_RTL8152|USB_SERIAL|MODVERSIONS|LOCALVERSION)[A-Z0-9_]*=' out/.config
           echo "--- requested options missing from the final .config:"
           for o in DEVTMPFS DEVTMPFS_MOUNT FHANDLE AUTOFS4_FS CRYPTO_USER_API_HASH USER_NS PID_NS IPC_NS SYSVIPC POSIX_MQUEUE CGROUP_PIDS CGROUP_DEVICE CFS_BANDWIDTH BINFMT_MISC BRIDGE BRIDGE_NETFILTER NF_TABLES ZRAM CRYPTO_ZSTD HFS_FS HFSPLUS_FS UDF_FS XFS_FS BTRFS_FS JFS_FS NILFS2_FS SQUASHFS CIFS NFS_V4; do grep -qE "^CONFIG_$o=[ym]" out/.config || echo "MISSING CONFIG_$o"; done
           $MK -j$(nproc)
+          if [ "$EXFAT_MODE" = added ]; then (llvm-nm out/vmlinux 2>/dev/null || nm out/vmlinux) | grep -E ' exfat_fs_type$' || echo "WARNING: exfat_fs_type not found in vmlinux symbols"; fi
           cat out/include/config/kernel.release
           ls -la out/arch/arm64/boot/
 
@@ -307,11 +317,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GROUPS_IN: ${{ github.event.inputs.groups }}
+          PRERELEASE: ${{ github.event.inputs.prerelease }}
         run: |
           set -x
           if ! gh release view "$OUT_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$OUT_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-              --title "$OUT_TAG (pre-release)" --notes "Test build from branch ${{ github.ref_name }}, groups: ${GROUPS_IN}. Not tested on a phone yet."
+            if [ "$PRERELEASE" = false ]; then
+              gh release create "$OUT_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+                --title "$OUT_TAG" --notes "Kernel 4.14.199 built from branch ${{ github.ref_name }}, groups: ${GROUPS_IN}. Adds the exfat filesystem type (sdfat only answers to \"sdfat\") and, with the fs group, more filesystems. Assets: AP_BOOT_WDT_A03G.tar (boot.img, flash with Odin AP), a03-wifi.tar.gz, Image, kernel.config, modules.tar.gz. The recovery and userdata artifacts are unchanged: take them from v1.0."
+            else
+              gh release create "$OUT_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+                --title "$OUT_TAG (pre-release)" --notes "Test build from branch ${{ github.ref_name }}, groups: ${GROUPS_IN}. Not tested on a phone yet."
+            fi
           fi
           gh release upload "$OUT_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             $HOME/work/Image $HOME/work/kernel.config $HOME/work/Module.symvers $HOME/work/crc-report.txt $HOME/work/modules.tar.gz

@@ -187,6 +187,17 @@ The GPIO numbers come from the Unisoc UMS9230 reference overlays (OCP8137 flash 
 source: they are untested on the phone, and the LED may stay dark if the IC also needs an I2C setup. Try it with
 `echo 1 > .../white:torch-chip-en/brightness; echo 1 > .../white:torch/brightness` (0 to turn it off).
 
+## USB drives and filesystems
+
+Since `v2.0` the kernel answers to `mount -t exfat` (driver `arter97/exfat-linux`, built in; Samsung's `sdfat` is also
+there but only under the type name `sdfat`). Already supported before: `vfat`/`msdos`, `ntfs`, `ext2`/`ext3`/`ext4`,
+`hfs`/`hfsplus`, `udf`, `iso9660`, `xfs`, `btrfs`, `f2fs`, `jfs`, `nilfs2`, `squashfs`, `cramfs`, `minix`, FUSE. With the
+`fs` option group the kernel also has hpfs, reiserfs, ufs, sysv, qnx4/6, bfs, efs, romfs, omfs, affs, adfs, befs and
+freevxfs (read-only where the driver makes writing risky). All of this is built into the kernel: no modules to install.
+It is **untested on the phone**. The minimal Debian image has no filesystem tools, so on the phone run
+`apt install exfatprogs ntfs-3g dosfstools` (and `e2fsprogs`, `xfsprogs`, `btrfs-progs`, `f2fs-tools` if you need to
+format or repair those). There is no automounting: `mount /dev/sda1 /mnt`.
+
 ## Screen and remote desktop
 
 We did **not** think about the screen: the test unit's display was destroyed, so nothing can be seen and the panel is

@@ -108,6 +108,17 @@ selectable with the `tag` input). Workflows read inputs with `gh release downloa
 - Pre-releases: `kernel.yml`, `boot-wdt.yml` and `wifi.yml` have an `out_tag` input. Inputs are read from `tag`
   (`v1.0`), outputs go to `out_tag` (created as a pre-release if missing). Publish on `main` only after a phone test.
 
+## Filesystems (USB drives)
+
+- Samsung's `sdfat` registers only the fs type `sdfat` (the `"exfat"`/`"vfat"` strings in `sdfat.c` are labels for log
+  messages), so `mount -t exfat` failed with "unknown filesystem type". `kernel.yml` now detects that and merges
+  `arter97/exfat-linux` (type `exfat`, built in, tested upstream on 4.14) into `fs/exfat`; the build fails early if
+  `CONFIG_EXFAT_FS=y` does not stick. `vfat`, `ntfs`, `hfs`/`hfsplus`, `udf`, `iso9660`, `xfs`, `btrfs`, `f2fs`, `jfs`,
+  `nilfs2`, `squashfs`, `cramfs`, `minix` and `ext2`/`ext3` (served by the ext4 driver) were already in the base config.
+- Kernel group `fs` adds read-only-by-default extras: hpfs, reiserfs, ufs, sysv, qnx4, qnx6, bfs, efs, romfs, omfs,
+  affs, adfs, befs, freevxfs. The "DANGEROUS" write options of ufs and adfs are deliberately left off.
+  **Untested on the real phone.** The Debian image has no `exfatprogs`/`ntfs-3g`: see the README.
+
 ## Known gaps
 
 No display or desktop support (the test unit's screen was destroyed; the panel is not managed and never switches off);
